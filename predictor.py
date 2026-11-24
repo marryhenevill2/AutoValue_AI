@@ -1,108 +1,63 @@
 
-from pathlib import Path
-import joblib
+import numpy as np
 import pandas as pd
+from pathlib import Path
+from catboost import CatBoostRegressor
 
-# Locate vehicle directory
+# Locate project directory
 BASE_DIR = Path(__file__).resolve().parent
 
-# Locate trained models
-MODEL_DIR = BASE_DIR / "models"
+# Locate saved model
+MODEL_PATH = BASE_DIR / "models" / "catboost_real_estate.cbm"
 
-# Load the three CatBoost models
-q10_model = joblib.load(MODEL_DIR / "catboost_q10.pkl")
-q50_model = joblib.load(MODEL_DIR / "catboost_q50.pkl")
-q90_model = joblib.load(MODEL_DIR / "catboost_q90.pkl")
-
-# Exact features used during training
-FEATURE_COLUMNS = [
-    'fuel type',
-    'gear type',
-    'Make',
-    'Model',
-    'Year of manufacture',
-    'Colour',
-    'Condition',
-    'Mileage',
-    'Engine Size',
-    'Selling Condition',
-    'Bought Condition',
-    'car',
-    'Trim',
-    'Drivetrain',
-    'Seats',
-    'Number of Cylinders',
-    'Horse Power',
-    'Registered city',
-    'Vehicle Age',
-    'Mileage per year',
-    'Make_Model'
-]
-
-# Categorical features
-CATEGORICAL_FEATURES = [
-    'fuel type',
-    'gear type',
-    'Make',
-    'Model',
-    'Colour',
-    'Condition',
-    'Selling Condition',
-    'Bought Condition',
-    'car',
-    'Trim',
-    'Drivetrain',
-    'Registered city',
-    'Make_Model'
-]
-
-# Numeric features
-NUMERIC_FEATURES = [
-    col for col in FEATURE_COLUMNS
-    if col not in CATEGORICAL_FEATURES
-]
+# Load trained CatBoost model
+model = CatBoostRegressor()
+model.load_model(str(MODEL_PATH))
 
 
-def predict_vehicle_price(vehicle_data):
+def predict_property_price(
+    bedrooms,
+    bathrooms,
+    toilets,
+    parking_space,
+    title,
+    location
+):
+    # Calculate total rooms
+    total_rooms = bedrooms + bathrooms + toilets
 
-    # Check for missing features
-    missing_features = [
-        col for col in FEATURE_COLUMNS
-        if col not in vehicle_data
+    # Prepare categorical inputs
+    title = str(title).strip()
+    location = str(location).strip()
+
+    # Prepare property information
+    property_data = pd.DataFrame([{
+        "bedrooms": bedrooms,
+        "bathrooms": bathrooms,
+        "toilets": toilets,
+        "parking_space": parking_space,
+        "title": title,
+        "total_rooms": total_rooms,
+        "location": location
+    }])
+
+    # Ensure numerical columns are numeric
+    numerical_columns = [
+        "bedrooms",
+        "bathrooms",
+        "toilets",
+        "parking_space",
+        "total_rooms"
     ]
 
-    if missing_features:
-        raise ValueError(f"Missing features: {missing_features}")
-
-    # Arrange features in training order
-    input_df = pd.DataFrame(
-        [vehicle_data],
-        columns=FEATURE_COLUMNS
+    property_data[numerical_columns] = (
+        property_data[numerical_columns].astype(float)
     )
 
-    # Convert numeric features
-    for col in NUMERIC_FEATURES:
-        input_df[col] = pd.to_numeric(
-            input_df[col],
-            errors="raise"
-        )
+    # Predict log-transformed price
+    predicted_log_price = model.predict(property_data)
 
-    # Convert categorical features to strings
-    for col in CATEGORICAL_FEATURES:
-        if pd.isna(input_df.at[0, col]):
-            raise ValueError(
-                f"Missing categorical value: {col}"
-            )
+    # Convert back to Naira
+    predicted_price = np.expm1(predicted_log_price[0])
 
-        input_df[col] = input_df[col].astype(str)
-
-    # Generate predictions
-    q10_prediction = q10_model.predict(input_df)[0]
-    q50_prediction = q50_model.predict(input_df)[0]
-    q90_prediction = q90_model.predict(input_df)[0]
-
-    return {
-        "lower_estimate": float(q10_prediction),
-        "median_estimate": float(q50_prediction),
-        "upper_estimate": float(q90_prediction)
-    }
+    return float(predicted_price)
